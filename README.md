@@ -22,13 +22,17 @@
 - Self-hosted Moon Support
 - Add custom planet config via file and URL
 - View peers list
+- Ability to select applications for tunneling
+- Added built-in tunneling through a SOCKS 5 server located in the ZeroTier network
+- Connection widget
 - Chinese translation
+- Russian translation
 
 ## Download
 
-Check [Releases page](https://github.com/kaaass/ZerotierFix/releases) for latest version.
+Check [Releases page](https://github.com/alm-2000/ZerotierFix-Socks5/releases) for latest version.
 
-If you want to try the nightly build, you can download it from [GitHub Actions](https://github.com/kaaass/ZerotierFix/actions/workflows/build-app.yml?query=branch%3Amaster).
+If you want to try the nightly build, you can download it from [GitHub Actions](https://github.com/kalm-2000/ZerotierFix-Socks5/actions/workflows/build-app.yml?query=branch%3Amaster).
 But please note that the nightly build may be **BUGGY** and **UNSTABLE**.
 
 ## Copyright
