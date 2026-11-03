@@ -1,6 +1,6 @@
 <h1 align="center">
   <img src="https://github.com/kaaass/ZerotierFix/blob/master/app/src/main/ic_launcher-playstore.png?raw=true" alt="Zerotier Fix" width="200">
-  <br>Zerotier Fix<br>
+  <br>Zerotier Fix + Socks5<br>
 </h1>
 
 <h4 align="center">An unofficial Zerotier Android client patched from official client.</h4>
