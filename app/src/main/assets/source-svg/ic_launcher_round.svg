@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="_Слой_1" data-name="Слой_1" xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 43.25 43.25">
+  <!-- Generator: Adobe Illustrator 30.6.0, SVG Export Plug-In . SVG Version: 2.1.4 Build 109)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #80613b;
+      }
+
+      .st1 {
+        fill: url(#_Безымянный_градиент);
+        stroke: #f0b65f;
+        stroke-width: .55px;
+      }
+
+      .st2 {
+        stroke-width: 1.8px;
+      }
+
+      .st2, .st3, .st4, .st5 {
+        fill: none;
+      }
+
+      .st2, .st4, .st5 {
+        stroke: #fffdf7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .st4 {
+        stroke-width: 2.15px;
+      }
+
+      .st6 {
+        clip-path: url(#clippath);
+      }
+
+      .st5 {
+        stroke-width: 1.55px;
+      }
+    </style>
+    <linearGradient id="_Безымянный_градиент" data-name="Безымянный градиент" x1="-915.43" y1="550.6" x2="-914.58" y2="549.6" gradientTransform="translate(39091.1882 23509.3629) scale(42.7 -42.7)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8c77e"/>
+      <stop offset="1" stop-color="#f6b95e"/>
+    </linearGradient>
+    <clipPath id="clippath">
+      <circle class="st3" cx="21.63" cy="21.63" r="21.2"/>
+    </clipPath>
+  </defs>
+  <circle class="st1" cx="21.62" cy="21.62" r="21.35"/>
+  <g class="st6">
+    <path class="st0" d="M11.18,12.26s4.88,4.49,4.88,4.49c.26.29-1.54,6.37-1.42,6.73.99,2.98,4.24,5.07,6.35,5.91,1.33.53-2.02-.92-1.57.44.12.37,1.9,3.98,2.2,4.25l10.6,9.8,16.7-17.8-16.88-15.8-20.86,1.99Z"/>
+  </g>
+  <g>
+    <path class="st4" d="M11.73,11.08h19.6"/>
+    <path class="st2" d="M21.73,11.43v22.1"/>
+    <ellipse class="st5" cx="21.73" cy="21.78" rx="7.25" ry="8.05"/>
+  </g>
+</svg>

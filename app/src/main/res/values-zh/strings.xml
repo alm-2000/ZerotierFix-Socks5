@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Zerotier Fix</string>
+    <string name="app_name">ZeroTier+Socks5</string>
     <string name="button_connect">连接</string>
     <string name="button_disconnect">断开连接</string>
     <string name="custom_dns">DNS 服务器</string>
@@ -58,6 +58,22 @@
     <string name="preferences_network_disable_ipv6">禁用 IPv6</string>
     <string name="preferences_network_disable_ipv6_summary">需要手动断开、重连使配置生效</string>
     <string name="preferences_network_use_cell_data">允许移动网络下使用</string>
+    <string name="preferences_socks5_enabled">使用 SOCKS5</string>
+    <string name="preferences_socks5_summary">保存 SOCKS5 设置以供后续路由使用。当前尚未启用路由。</string>
+    <string name="preferences_socks5_host">SOCKS5 服务器</string>
+    <string name="preferences_socks5_port">SOCKS5 端口</string>
+    <string name="preferences_socks5_host_required">启用 SOCKS5 前请输入服务器地址。</string>
+    <string name="preferences_socks5_port_invalid">请输入 1 到 65535 之间的端口号。</string>
+    <string name="preferences_socks5_apps">使用 SOCKS5 的应用</string>
+    <string name="preferences_socks5_apps_summary">选择通过 SOCKS5 传输 IPv4 TCP Internet 流量的已安装应用。</string>
+    <string name="preferences_socks5_apps_empty">未选择应用；SOCKS5 路由未启用。</string>
+    <string name="preferences_socks5_apps_count">已选择 %1$d 个应用</string>
+    <string name="preferences_socks5_apps_dialog">使用 SOCKS5 的应用</string>
+    <string name="preferences_socks5_apps_search_hint">搜索应用…</string>
+    <string name="preferences_socks5_apps_select_all">全选</string>
+    <string name="preferences_socks5_apps_deselect_all">取消全选</string>
+    <string name="preferences_socks5_service_note">为连接 SOCKS5 服务器，ZeroTier 服务流量也必须使用此 VPN。</string>
+    <string name="socks5_not_configured">尚未配置</string>
     <string name="reset_planet">重置 Planet</string>
     <string name="settings">设置</string>
     <string name="status_label">状态:</string>
@@ -146,9 +162,33 @@
     <string name="toast_network_status_authentication_required">无法连接至网络 %1$s: 需要授权</string>
     <string name="toast_vpn_error">VPN 服务发生错误！%1$s</string>
     <string name="empty_network_name">未知</string>
+    <string name="preferences_value_not_set">未设置</string>
     <string name="app_version_format">(APP: %s)</string>
     <string name="dialog_no_notification_alert_text">Zerotier Fix 未获得通知权限！您可能会遗漏用于提示连接状态的通知气泡与状态栏消息。Zerotier Fix 推荐您打开应用通知权限以获取连接状态信息。如果您不希望看到状态栏的常驻通知，您仍可以在打开通知权限后关闭对应通知类别的消息。</string>
     <string name="dialog_no_notification_alert_title">未开启通知权限</string>
     <string name="open_notification_settings">打开通知设置</string>
     <string name="dont_show_again">不再提示</string>
+    <string name="widget_description">控制选定的一个 ZeroTier 网络</string>
+    <string name="widget_network_setting_title">桌面小组件网络</string>
+    <string name="widget_network_setting_summary">选择小组件控制的唯一网络</string>
+    <string name="widget_network_selected">已选择网络 ID：%1$s</string>
+    <string name="widget_network_unavailable">所选网络 ID %1$s 不可用，请重新选择。</string>
+    <string name="widget_no_networks">请先加入网络，然后再为小组件选择网络。</string>
+    <string name="widget_network_id">网络 ID：%1$s</string>
+    <string name="widget_not_configured">请在 ZeroTier 设置中选择网络</string>
+    <string name="widget_configure">配置</string>
+    <string name="widget_connect">连接</string>
+    <string name="widget_disconnect">断开</string>
+    <string name="widget_pending">处理中…</string>
+    <string name="widget_vpn_authorization_required">请打开 ZeroTier 并授权 VPN 连接后使用小组件。</string>
+    <string name="widget_action_failed">ZeroTier 无法启动所请求的操作。</string>
+    <string name="widget_duplicate_title">重复的小组件</string>
+    <string name="widget_duplicate_message">只能有一个小组件控制网络。</string>
+    <string name="widget_compact_description">所选 ZeroTier 网络的纯图标 1×1 控制小组件</string>
+    <string name="widget_compact_label">ZeroTier 图标开关</string>
+    <string name="widget_compact_connected">ZeroTier 网络已连接。点按以断开连接。</string>
+    <string name="widget_compact_disconnected">ZeroTier 网络未连接。点按以连接。</string>
+    <string name="widget_compact_connecting">ZeroTier 正在连接。点按以停止。</string>
+    <string name="notification_title_connecting">正在启动 ZeroTier</string>
+    <string name="notification_text_connecting">正在连接所选网络…</string>
 </resources>

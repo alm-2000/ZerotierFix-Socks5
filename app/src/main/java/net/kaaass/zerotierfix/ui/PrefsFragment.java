@@ -5,13 +5,24 @@ import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
+import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -27,10 +38,18 @@ import com.google.android.material.snackbar.Snackbar;
 
 import net.kaaass.zerotierfix.R;
 import net.kaaass.zerotierfix.service.ZeroTierOneService;
+import net.kaaass.zerotierfix.events.Socks5SettingsChangedEvent;
+import net.kaaass.zerotierfix.model.Socks5Config;
+import net.kaaass.zerotierfix.ZerotierFixApplication;
+import net.kaaass.zerotierfix.model.Network;
+import net.kaaass.zerotierfix.model.NetworkDao;
+import net.kaaass.zerotierfix.service.NetworkWidgetProvider;
 import net.kaaass.zerotierfix.util.Constants;
 import net.kaaass.zerotierfix.util.FileUtil;
+import net.kaaass.zerotierfix.util.Socks5AppPreferences;
 
 import org.apache.commons.io.FileUtils;
+import org.greenrobot.eventbus.EventBus;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -40,6 +59,11 @@ import java.net.MalformedURLException;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Objects;
 
 /**
@@ -58,6 +82,11 @@ public class PrefsFragment extends PreferenceFragmentCompat implements SharedPre
     };
     private SwitchPreference prefPlanetUseCustom;
     private Preference prefSetPlanetFile;
+    private SwitchPreference prefSocks5Enabled;
+    private Socks5ValueEditTextPreference prefSocks5Host;
+    private Socks5ValueEditTextPreference prefSocks5Port;
+    private Preference prefSocks5Apps;
+    private Preference prefWidgetNetwork;
     private Dialog planetDialog = null;
     private Dialog loadingDialog = null;
     private ActivityResultLauncher<Intent> planetFileSelectLauncher = null;
@@ -116,6 +145,64 @@ public class PrefsFragment extends PreferenceFragmentCompat implements SharedPre
 
         this.prefPlanetUseCustom = findPreference(Constants.PREF_PLANET_USE_CUSTOM);
         this.prefSetPlanetFile = findPreference(Constants.PREF_SET_PLANET_FILE);
+        this.prefSocks5Enabled = findPreference(Constants.PREF_SOCKS5_ENABLED);
+        this.prefSocks5Host = findPreference(Constants.PREF_SOCKS5_HOST);
+        this.prefSocks5Port = findPreference(Constants.PREF_SOCKS5_PORT);
+        this.prefSocks5Apps = findPreference(Constants.PREF_SOCKS5_APPLICATIONS);
+        this.prefWidgetNetwork = findPreference(Constants.PREF_WIDGET_NETWORK_ID);
+        Objects.requireNonNull(this.prefWidgetNetwork).setOnPreferenceClickListener(preference -> {
+            showWidgetNetworkDialog();
+            return true;
+        });
+        updateWidgetNetworkSummary();
+        Objects.requireNonNull(this.prefSocks5Host).setOnBindEditTextListener(
+                editText -> editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI));
+        Objects.requireNonNull(this.prefSocks5Port).setOnBindEditTextListener(
+                editText -> editText.setInputType(InputType.TYPE_CLASS_NUMBER));
+        Objects.requireNonNull(this.prefSocks5Apps).setOnPreferenceClickListener(preference -> {
+            showSocks5AppsDialog();
+            return true;
+        });
+        updateSocks5AppsSummary();
+
+        Objects.requireNonNull(this.prefSocks5Enabled).setOnPreferenceChangeListener((preference, newValue) -> {
+            boolean enabled = (Boolean) newValue;
+            try {
+                Socks5Config.create(enabled,
+                        getPreferenceManager().getSharedPreferences().getString(Constants.PREF_SOCKS5_HOST, ""),
+                        getPreferenceManager().getSharedPreferences().getString(Constants.PREF_SOCKS5_PORT,
+                                Integer.toString(Socks5Config.DEFAULT_PORT)));
+                return true;
+            } catch (IllegalArgumentException e) {
+                Toast.makeText(getContext(),
+                        enabled && isHostMissing() ? R.string.preferences_socks5_host_required
+                                : R.string.preferences_socks5_port_invalid,
+                        Toast.LENGTH_LONG).show();
+                return false;
+            }
+        });
+        Objects.requireNonNull(this.prefSocks5Host).setOnPreferenceChangeListener((preference, newValue) -> {
+            try {
+                Socks5Config.create(isSocks5Enabled(), (String) newValue,
+                        getPreferenceManager().getSharedPreferences().getString(Constants.PREF_SOCKS5_PORT,
+                                Integer.toString(Socks5Config.DEFAULT_PORT)));
+                return true;
+            } catch (IllegalArgumentException e) {
+                Toast.makeText(getContext(), R.string.preferences_socks5_host_required, Toast.LENGTH_LONG).show();
+                return false;
+            }
+        });
+        Objects.requireNonNull(this.prefSocks5Port).setOnPreferenceChangeListener((preference, newValue) -> {
+            try {
+                Socks5Config.create(isSocks5Enabled(),
+                        getPreferenceManager().getSharedPreferences().getString(Constants.PREF_SOCKS5_HOST, ""),
+                        (String) newValue);
+                return true;
+            } catch (IllegalArgumentException e) {
+                Toast.makeText(getContext(), R.string.preferences_socks5_port_invalid, Toast.LENGTH_LONG).show();
+                return false;
+            }
+        });
 
         // Plane 配置开关
         Objects.requireNonNull(this.prefPlanetUseCustom).setOnPreferenceClickListener(preference -> {
@@ -139,6 +226,198 @@ public class PrefsFragment extends PreferenceFragmentCompat implements SharedPre
             return true;
         });
         updatePlanetSetting();
+    }
+
+    private void showWidgetNetworkDialog() {
+        java.util.List<Network> networks = ((ZerotierFixApplication) requireActivity().getApplication())
+                .getDaoSession().getNetworkDao().queryBuilder()
+                .orderAsc(NetworkDao.Properties.NetworkId).list();
+        if (networks.isEmpty()) {
+            new AlertDialog.Builder(requireContext()).setTitle(R.string.widget_network_setting_title)
+                    .setMessage(R.string.widget_no_networks).setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
+        String[] labels = new String[networks.size()];
+        for (int i = 0; i < networks.size(); i++) {
+            Network network = networks.get(i);
+            String name = network.getNetworkName();
+            if (name == null || name.trim().isEmpty()) name = getString(R.string.empty_network_name);
+            labels[i] = name + " (" + network.getNetworkIdStr() + ")";
+        }
+        new AlertDialog.Builder(requireContext()).setTitle(R.string.widget_network_setting_title)
+                .setItems(labels, (dialog, which) -> {
+                    Network selected = networks.get(which);
+                    getPreferenceManager().getSharedPreferences().edit()
+                            .putLong(Constants.PREF_WIDGET_NETWORK_ID, selected.getNetworkId())
+                            .putBoolean(Constants.PREF_WIDGET_CONNECTED, false)
+                            .putBoolean(Constants.PREF_WIDGET_PENDING, false).apply();
+                    updateWidgetNetworkSummary();
+                    NetworkWidgetProvider.refresh(requireContext());
+                }).setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void updateWidgetNetworkSummary() {
+        if (prefWidgetNetwork == null || getPreferenceManager().getSharedPreferences() == null) return;
+        long id = getPreferenceManager().getSharedPreferences().getLong(Constants.PREF_WIDGET_NETWORK_ID, 0L);
+        if (id == 0L) {
+            prefWidgetNetwork.setSummary(R.string.widget_network_setting_summary);
+            return;
+        }
+        Network selected = ((ZerotierFixApplication) requireActivity().getApplication()).getDaoSession()
+                .getNetworkDao().queryBuilder().where(NetworkDao.Properties.NetworkId.eq(id)).unique();
+        prefWidgetNetwork.setSummary(selected == null
+                ? getString(R.string.widget_network_unavailable, String.format(java.util.Locale.ROOT, "%016x", id))
+                : getString(R.string.widget_network_selected, selected.getNetworkIdStr()));
+    }
+
+    private boolean isSocks5Enabled() {
+        return getPreferenceManager().getSharedPreferences()
+                .getBoolean(Constants.PREF_SOCKS5_ENABLED, false);
+    }
+
+    private boolean isHostMissing() {
+        String host = getPreferenceManager().getSharedPreferences()
+                .getString(Constants.PREF_SOCKS5_HOST, "");
+        return host == null || host.trim().isEmpty();
+    }
+
+    private void updateSocks5AppsSummary() {
+        if (prefSocks5Apps == null || getContext() == null) return;
+        int count = Socks5AppPreferences.load(requireContext()).size();
+        if (count == 0) prefSocks5Apps.setSummary(R.string.preferences_socks5_apps_empty);
+        else prefSocks5Apps.setSummary(getString(R.string.preferences_socks5_apps_count, count));
+
+    }
+
+    private void refreshSocks5DisplayedValues() {
+        if (prefSocks5Host != null) prefSocks5Host.refreshDisplayedValue();
+        if (prefSocks5Port != null) prefSocks5Port.refreshDisplayedValue();
+    }
+
+    private void showSocks5AppsDialog() {
+        PackageManager packageManager = requireContext().getPackageManager();
+        Intent launcherIntent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        ArrayList<ApplicationInfo> applications = new ArrayList<>();
+        Set<String> seenPackages = new HashSet<>();
+        for (ResolveInfo resolved : packageManager.queryIntentActivities(launcherIntent, 0)) {
+            ApplicationInfo info = resolved.activityInfo.applicationInfo;
+            if (info == null || getContext().getPackageName().equals(info.packageName)
+                    || !seenPackages.add(info.packageName)) continue;
+            applications.add(info);
+        }
+        Collections.sort(applications, Comparator.comparing(
+                info -> info.loadLabel(packageManager).toString(), String.CASE_INSENSITIVE_ORDER));
+
+        Set<String> checked = new HashSet<>(Socks5AppPreferences.load(requireContext()));
+        ListView list = new ListView(requireContext());
+        ArrayList<ApplicationInfo> visibleApplications = new ArrayList<>(applications);
+        Socks5ApplicationAdapter adapter = new Socks5ApplicationAdapter(packageManager,
+                applications, visibleApplications, checked);
+        list.setAdapter(adapter);
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            ApplicationInfo info = visibleApplications.get(position);
+            if (!checked.add(info.packageName)) checked.remove(info.packageName);
+            adapter.notifyDataSetChanged();
+        });
+
+        EditText search = new EditText(requireContext());
+        search.setSingleLine(true);
+        search.setHint(R.string.preferences_socks5_apps_search_hint);
+        search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                String query = s.toString().trim();
+                String normalizedQuery = query.toLowerCase(java.util.Locale.ROOT);
+                visibleApplications.clear();
+                for (ApplicationInfo app : applications) {
+                    String name = app.loadLabel(packageManager).toString();
+                    if (normalizedQuery.isEmpty() || name.toLowerCase(java.util.Locale.ROOT)
+                            .contains(normalizedQuery)) {
+                        visibleApplications.add(app);
+                    }
+                }
+                adapter.notifyDataSetChanged();
+            }
+            @Override public void afterTextChanged(Editable s) { }
+        });
+
+        android.widget.LinearLayout bulkActions = new android.widget.LinearLayout(requireContext());
+        bulkActions.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        android.widget.Button selectAll = new android.widget.Button(requireContext());
+        selectAll.setText(R.string.preferences_socks5_apps_select_all);
+        selectAll.setOnClickListener(v -> {
+            for (ApplicationInfo app : applications) checked.add(app.packageName);
+            adapter.notifyDataSetChanged();
+        });
+        android.widget.Button deselectAll = new android.widget.Button(requireContext());
+        deselectAll.setText(R.string.preferences_socks5_apps_deselect_all);
+        deselectAll.setOnClickListener(v -> {
+            for (ApplicationInfo app : applications) checked.remove(app.packageName);
+            adapter.notifyDataSetChanged();
+        });
+        bulkActions.addView(selectAll, new android.widget.LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        bulkActions.addView(deselectAll, new android.widget.LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView note = new TextView(requireContext());
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        note.setPadding(pad, pad, pad, pad / 2);
+        note.setText(R.string.preferences_socks5_service_note);
+
+        android.widget.LinearLayout content = new android.widget.LinearLayout(requireContext());
+        content.setOrientation(android.widget.LinearLayout.VERTICAL);
+        content.addView(note);
+        content.addView(search, new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(bulkActions, new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(list, new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, (int) (400 * getResources().getDisplayMetrics().density)));
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle(R.string.preferences_socks5_apps_dialog)
+                .setView(content)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    Socks5AppPreferences.save(getPreferenceManager().getSharedPreferences(), checked);
+                    updateSocks5AppsSummary();
+                    EventBus.getDefault().post(new Socks5SettingsChangedEvent());
+                })
+                .show();
+    }
+
+    private static final class Socks5ApplicationAdapter extends BaseAdapter {
+        private final PackageManager packageManager;
+        private final ArrayList<ApplicationInfo> visibleApplications;
+        private final Set<String> checked;
+
+        Socks5ApplicationAdapter(PackageManager packageManager, ArrayList<ApplicationInfo> applications,
+                                 ArrayList<ApplicationInfo> visibleApplications, Set<String> checked) {
+            this.packageManager = packageManager;
+            this.visibleApplications = visibleApplications;
+            this.checked = checked;
+        }
+
+        @Override public int getCount() { return visibleApplications.size(); }
+        @Override public ApplicationInfo getItem(int position) { return visibleApplications.get(position); }
+        @Override public long getItemId(int position) { return position; }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            View row = convertView;
+            if (row == null) {
+                row = LayoutInflater.from(parent.getContext()).inflate(R.layout.row_socks5_application,
+                        parent, false);
+            }
+            ApplicationInfo app = getItem(position);
+            ((ImageView) row.findViewById(R.id.app_icon)).setImageDrawable(app.loadIcon(packageManager));
+            ((TextView) row.findViewById(R.id.app_name)).setText(app.loadLabel(packageManager));
+            ((TextView) row.findViewById(R.id.app_package)).setText(app.packageName);
+            ((CheckBox) row.findViewById(R.id.app_selected)).setChecked(checked.contains(app.packageName));
+            return row;
+        }
     }
 
     /**
@@ -253,11 +532,26 @@ public class PrefsFragment extends PreferenceFragmentCompat implements SharedPre
     @Override
     public void onResume() {
         super.onResume();
+        PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .registerOnSharedPreferenceChangeListener(this);
+        refreshSocks5DisplayedValues();
+    }
+
+    @Override
+    public void onPause() {
+        PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .unregisterOnSharedPreferenceChangeListener(this);
+        super.onPause();
     }
 
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
-        if (key.equals(Constants.PREF_NETWORK_USE_CELLULAR_DATA)) {
+        if (Constants.PREF_SOCKS5_ENABLED.equals(key)
+                || Constants.PREF_SOCKS5_HOST.equals(key)
+                || Constants.PREF_SOCKS5_PORT.equals(key)) {
+            EventBus.getDefault().post(new Socks5SettingsChangedEvent());
+            refreshSocks5DisplayedValues();
+        } else if (key.equals(Constants.PREF_NETWORK_USE_CELLULAR_DATA)) {
             // 移动网络数据配置
             if (sharedPreferences.getBoolean(Constants.PREF_NETWORK_USE_CELLULAR_DATA, false)) {
                 requireActivity().startService(new Intent(getActivity(), ZeroTierOneService.class));

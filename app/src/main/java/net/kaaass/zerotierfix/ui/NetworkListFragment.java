@@ -7,6 +7,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.VpnService;
 import android.os.Bundle;
@@ -19,6 +20,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.PopupMenu;
 import android.widget.TextView;
@@ -105,6 +107,7 @@ public class NetworkListFragment extends Fragment {
     private TextView nodeIdView;
     private TextView nodeStatusView;
     private TextView nodeClientVersionView;
+    private TextView socks5ServerPortView;
 
     private View emptyView = null;
     final private RecyclerView.AdapterDataObserver checkIfEmptyObserver = new RecyclerView.AdapterDataObserver() {
@@ -241,6 +244,11 @@ public class NetworkListFragment extends Fragment {
         this.nodeIdView = view.findViewById(R.id.node_id);
         this.nodeStatusView = view.findViewById(R.id.node_status);
         this.nodeClientVersionView = view.findViewById(R.id.client_version);
+        this.socks5ServerPortView = view.findViewById(R.id.socks5_server_port);
+        Button socks5SettingsButton = view.findViewById(R.id.socks5_settings_button);
+        socks5SettingsButton.setOnClickListener(button ->
+                startActivity(new Intent(getActivity(), PrefsActivity.class)));
+        updateSocks5ServerPort();
         setNodeIdText();
         TextView appVersionView = view.findViewById(R.id.app_version);
         appVersionView.setText(String.format(getString(R.string.app_version_format),
@@ -284,7 +292,7 @@ public class NetworkListFragment extends Fragment {
     public void onCreate(Bundle savedInstanceState) {
         Log.d(TAG, "NetworkListFragment.onCreate");
         super.onCreate(savedInstanceState);
-        PreferenceManager.setDefaultValues(getActivity(), R.xml.preferences, false);
+        androidx.preference.PreferenceManager.setDefaultValues(getActivity(), R.xml.preferences, false);
         setHasOptionsMenu(true);
 
         // 获取 ViewModel
@@ -294,12 +302,25 @@ public class NetworkListFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
+        updateSocks5ServerPort();
         this.nodeStatusView.setText(R.string.status_offline);
         this.eventBus.register(this);
         this.eventBus.post(new IsServiceRunningRequestEvent());
         updateNetworkListAndNotify();
         this.eventBus.post(new NetworkListRequestEvent());
         this.eventBus.post(new NodeStatusRequestEvent());
+    }
+
+    private void updateSocks5ServerPort() {
+        if (this.socks5ServerPortView == null) return;
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(requireContext());
+        String host = preferences.getString(Constants.PREF_SOCKS5_HOST, "");
+        String port = preferences.getString(Constants.PREF_SOCKS5_PORT, "");
+        if (host == null || host.trim().isEmpty() || port == null || port.trim().isEmpty()) {
+            this.socks5ServerPortView.setText(R.string.socks5_not_configured);
+        } else {
+            this.socks5ServerPortView.setText(host.trim() + ":" + port.trim());
+        }
     }
 
     @Override

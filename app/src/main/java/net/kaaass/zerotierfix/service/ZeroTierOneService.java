@@ -45,6 +45,7 @@ import net.kaaass.zerotierfix.events.OrbitMoonEvent;
 import net.kaaass.zerotierfix.events.PeerInfoReplyEvent;
 import net.kaaass.zerotierfix.events.PeerInfoRequestEvent;
 import net.kaaass.zerotierfix.events.StopEvent;
+import net.kaaass.zerotierfix.events.Socks5SettingsChangedEvent;
 import net.kaaass.zerotierfix.events.VPNErrorEvent;
 import net.kaaass.zerotierfix.events.VirtualNetworkConfigChangedEvent;
 import net.kaaass.zerotierfix.events.VirtualNetworkConfigReplyEvent;
@@ -53,6 +54,7 @@ import net.kaaass.zerotierfix.model.AppNode;
 import net.kaaass.zerotierfix.model.MoonOrbit;
 import net.kaaass.zerotierfix.model.Network;
 import net.kaaass.zerotierfix.model.NetworkDao;
+import net.kaaass.zerotierfix.model.Socks5Config;
 import net.kaaass.zerotierfix.model.type.DNSMode;
 import net.kaaass.zerotierfix.ui.NetworkListActivity;
 import net.kaaass.zerotierfix.util.Constants;
@@ -60,6 +62,9 @@ import net.kaaass.zerotierfix.util.DatabaseUtils;
 import net.kaaass.zerotierfix.util.InetAddressUtils;
 import net.kaaass.zerotierfix.util.NetworkInfoUtils;
 import net.kaaass.zerotierfix.util.StringUtils;
+import net.kaaass.zerotierfix.util.Socks5Preferences;
+import net.kaaass.zerotierfix.util.Socks5AppPreferences;
+ 
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -67,6 +72,7 @@ import org.greenrobot.eventbus.ThreadMode;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -74,6 +80,8 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -81,6 +89,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 // TODO: clear up
 public class ZeroTierOneService extends VpnService implements Runnable, EventListener, VirtualNetworkConfigListener {
+    public static final String ACTION_WIDGET_CONNECT = "net.kaaass.zerotierfix.widget.CONNECT";
+    public static final String ACTION_WIDGET_DISCONNECT = "net.kaaass.zerotierfix.widget.DISCONNECT";
     public static final int MSG_JOIN_NETWORK = 1;
     public static final int MSG_LEAVE_NETWORK = 2;
     public static final String ZT1_NETWORK_ID = "com.zerotier.one.network_id";
@@ -266,14 +276,28 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
     public int onStartCommand(Intent intent, int flags, int startId) {
         long networkId;
         Log.d(TAG, "onStartCommand");
-        if (startId == 3) {
-            Log.i(TAG, "Authorizing VPN");
-            return START_NOT_STICKY;
-        } else if (intent == null) {
+        if (intent == null) {
             Log.e(TAG, "NULL intent.  Cannot start");
+            finishWidgetOperation(false);
             return START_NOT_STICKY;
         }
         this.mStartID = startId;
+
+        if (ACTION_WIDGET_DISCONNECT.equals(intent.getAction())) {
+            long targetId = intent.getLongExtra(ZT1_NETWORK_ID, 0L);
+            if (this.node != null && targetId != 0L) {
+                leaveNetwork(targetId);
+            } else {
+                finishWidgetOperation(false);
+                stopSelf(startId);
+            }
+            return START_STICKY;
+        }
+
+        // A home-screen tap may start this service while the app process is cached or
+        // Samsung has put it to sleep. Promote immediately when the service was started
+        // with startForegroundService(), then replace this with the connected notice.
+        startForegroundWithConnectingNotification();
 
         // 注册事件总线监听器
         if (!this.eventBus.isRegistered(this)) {
@@ -315,6 +339,15 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
             stopSelf(startId);
             return START_NOT_STICKY;
         }
+        if (ACTION_WIDGET_CONNECT.equals(intent.getAction())) {
+            var known = ((ZerotierFixApplication) getApplication()).getDaoSession().getNetworkDao()
+                    .queryBuilder().where(NetworkDao.Properties.NetworkId.eq(networkId)).list();
+            if (known.size() != 1) {
+                finishWidgetOperation(false);
+                stopSelf(startId);
+                return START_NOT_STICKY;
+            }
+        }
         this.networkId = networkId;
 
         // 检查当前的网络环境
@@ -326,12 +359,14 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         if (currentNetworkInfo == NetworkInfoUtils.CurrentConnection.CONNECTION_NONE) {
             // 未连接网络
             Toast.makeText(this, R.string.toast_no_network, Toast.LENGTH_SHORT).show();
+            finishWidgetOperation(false);
             stopSelf(this.mStartID);
             return START_NOT_STICKY;
         } else if (currentNetworkInfo == NetworkInfoUtils.CurrentConnection.CONNECTION_MOBILE &&
                 !useCellularData) {
             // 使用移动网络，但未在设置中允许移动网络访问
             Toast.makeText(this, R.string.toast_mobile_data, Toast.LENGTH_LONG).show();
+            finishWidgetOperation(false);
             stopSelf(this.mStartID);
             return START_NOT_STICKY;
         }
@@ -364,6 +399,7 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
                         Log.d(TAG, "ZeroTierOne Node Initialized");
                     } else {
                         Log.e(TAG, "Error starting ZT1 Node: " + result);
+                        finishWidgetOperation(false);
                         return START_NOT_STICKY;
                     }
                     this.onNodeStatusRequest(null);
@@ -421,7 +457,43 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         return START_STICKY;
     }
 
+    private void startForegroundWithConnectingNotification() {
+        ensureNotificationChannel();
+        int pendingIntentFlag = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= 23) pendingIntentFlag |= PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent contentIntent = PendingIntent.getActivity(this, 0,
+                new Intent(this, NetworkListActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                | Intent.FLAG_ACTIVITY_CLEAR_TOP), pendingIntentFlag);
+        var notification = new NotificationCompat.Builder(this, Constants.CHANNEL_ID)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setOngoing(true)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(getString(R.string.notification_title_connecting))
+                .setContentText(getString(R.string.notification_text_connecting))
+                .setColor(ContextCompat.getColor(getApplicationContext(), R.color.zerotier_orange))
+                .setContentIntent(contentIntent)
+                .build();
+        startForeground(ZT_NOTIFICATION_TAG, notification);
+    }
+
+    private void ensureNotificationChannel() {
+        if (this.notificationManager == null) {
+            this.notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            String channelName = getString(R.string.channel_name);
+            String description = getString(R.string.channel_description);
+            var channel = new NotificationChannel(Constants.CHANNEL_ID, channelName,
+                    NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription(description);
+            this.notificationManager.createNotificationChannel(channel);
+        }
+    }
+
     public void stopZeroTier() {
+        finishWidgetOperation(false);
+        if (this.tunTapAdapter != null) this.tunTapAdapter.stopSocks5Proxy();
         if (this.svrSocket != null) {
             this.svrSocket.close();
             this.svrSocket = null;
@@ -485,6 +557,7 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         if (this.notificationManager != null) {
             this.notificationManager.cancel(ZT_NOTIFICATION_TAG);
         }
+        stopForeground(true);
         if (!stopSelfResult(this.mStartID)) {
             Log.e(TAG, "stopSelfResult() failed!");
         }
@@ -564,6 +637,24 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         stopZeroTier();
     }
 
+    @Subscribe(threadMode = ThreadMode.ASYNC)
+    public void onSocks5SettingsChanged(Socks5SettingsChangedEvent event) {
+        if (this.node == null || this.networkId == 0 || this.tunTapAdapter == null) return;
+        Network activeNetwork = null;
+        DatabaseUtils.readLock.lock();
+        try {
+            var dao = ((ZerotierFixApplication) getApplication()).getDaoSession().getNetworkDao();
+            var networks = dao.queryBuilder()
+                    .where(NetworkDao.Properties.NetworkId.eq(this.networkId))
+                    .list();
+            if (networks.size() == 1) activeNetwork = networks.get(0);
+            else Log.e(TAG, "Cannot reload SOCKS5 settings: active ZeroTier network is missing");
+        } finally {
+            DatabaseUtils.readLock.unlock();
+        }
+        if (activeNetwork != null) updateTunnelConfig(activeNetwork);
+    }
+
     @Subscribe(threadMode = ThreadMode.POSTING)
     public void onManualDisconnect(ManualDisconnectEvent manualDisconnectEvent) {
         stopZeroTier();
@@ -586,6 +677,8 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         var result = this.node.join(networkId);
         if (result != ResultCode.RESULT_OK) {
             this.eventBus.post(new ErrorEvent(result));
+            if (networkId == PreferenceManager.getDefaultSharedPreferences(this)
+                    .getLong(Constants.PREF_WIDGET_NETWORK_ID, 0L)) finishWidgetOperation(false);
             return;
         }
         // 连接后事件
@@ -603,9 +696,18 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         var result = this.node.leave(networkId);
         if (result != ResultCode.RESULT_OK) {
             this.eventBus.post(new ErrorEvent(result));
+            finishWidgetOperation(false);
             return;
         }
         var networkConfigs = this.node.networkConfigs();
+        boolean targetStillJoined = false;
+        if (networkConfigs != null) {
+            for (VirtualNetworkConfig config : networkConfigs) {
+                if (config.getNwid() == networkId) targetStillJoined = true;
+            }
+        }
+        if (!targetStillJoined && networkId == PreferenceManager.getDefaultSharedPreferences(this)
+                .getLong(Constants.PREF_WIDGET_NETWORK_ID, 0L)) finishWidgetOperation(false);
         if (networkConfigs != null && networkConfigs.length != 0) {
             return;
         }
@@ -738,17 +840,30 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
                     Log.i(TAG, "Network Config Update!");
                     boolean isChanged = setVirtualNetworkConfigAndUpdateDatabase(network, config);
                     this.eventBus.post(new NetworkReconfigureEvent(isChanged, network, config));
+                    if (networkId == PreferenceManager.getDefaultSharedPreferences(this)
+                            .getLong(Constants.PREF_WIDGET_NETWORK_ID, 0L)) {
+                        finishWidgetOperation(config.getStatus() == VirtualNetworkStatus.NETWORK_STATUS_OK);
+                    }
                     break;
                 case VIRTUAL_NETWORK_CONFIG_OPERATION_DOWN:
                 case VIRTUAL_NETWORK_CONFIG_OPERATION_DESTROY:
                     Log.d(TAG, "Network Down!");
                     clearVirtualNetworkConfig(networkId);
+                    if (networkId == PreferenceManager.getDefaultSharedPreferences(this)
+                            .getLong(Constants.PREF_WIDGET_NETWORK_ID, 0L)) finishWidgetOperation(false);
                     break;
             }
             return 0;
         } finally {
             DatabaseUtils.writeLock.unlock();
         }
+    }
+
+    private void finishWidgetOperation(boolean connected) {
+        android.content.SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        prefs.edit().putBoolean(Constants.PREF_WIDGET_CONNECTED, connected)
+                .putBoolean(Constants.PREF_WIDGET_PENDING, false).apply();
+        NetworkWidgetProvider.refresh(this);
     }
 
     private boolean setVirtualNetworkConfigAndUpdateDatabase(Network network, VirtualNetworkConfig virtualNetworkConfig) {
@@ -778,7 +893,7 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         stopSelf(this.mStartID);
     }
 
-    private boolean updateTunnelConfig(Network network) {
+    private synchronized boolean updateTunnelConfig(Network network) {
         long networkId = network.getNetworkId();
         var networkConfig = network.getNetworkConfig();
         var virtualNetworkConfig = getVirtualNetworkConfig(networkId);
@@ -786,8 +901,51 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
             return false;
         }
 
+        Socks5Config socks5 = Socks5Preferences.load(this);
+        Set<String> selectedSocksApps = new LinkedHashSet<>();
+        if (socks5.isEnabled()) {
+            for (String packageName : Socks5AppPreferences.load(this)) {
+                if (getPackageName().equals(packageName)) continue;
+                try {
+                    getPackageManager().getApplicationInfo(packageName, 0);
+                    selectedSocksApps.add(packageName);
+                } catch (Exception missingOrInvalidPackage) {
+                    Log.w(TAG, "Ignoring unavailable SOCKS5 app package");
+                }
+            }
+        }
+        boolean proxyAppsSelected = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+                && !selectedSocksApps.isEmpty();
+        if (socks5.isEnabled() && !selectedSocksApps.isEmpty() && !proxyAppsSelected) {
+            Log.e(TAG, "SOCKS5 per-app routing unavailable before Android 5.0; keeping proxy route inactive");
+        }
+        if (proxyAppsSelected) {
+            // The unprotected HEV SOCKS socket must enter this VPN so its endpoint packets
+            // can be dispatched through ZeroTier. The protected ZeroTier underlay is unchanged.
+            selectedSocksApps.add(getPackageName());
+            Log.d(TAG, "SOCKS5 enabled; selected app count=" + (selectedSocksApps.size() - 1)
+                    + ", packages=" + selectedSocksApps);
+        } else if (socks5.isEnabled()) {
+            Log.i(TAG, "SOCKS5 enabled with no selected applications; proxy route inactive");
+        }
+        Inet4Address socksEndpoint = null;
+        if (socks5.isEnabled()) {
+            try {
+                for (InetAddress address : InetAddress.getAllByName(socks5.getHost())) {
+                    if (address instanceof Inet4Address) {
+                        socksEndpoint = (Inet4Address) address;
+                        break;
+                    }
+                }
+                if (socksEndpoint == null) throw new IOException("SOCKS5 host has no IPv4 address");
+            } catch (Exception e) {
+                Log.e(TAG, "HEV_START_FAILED: SOCKS5 endpoint resolution failed", e);
+            }
+        }
+
         // 重启 TUN TAP
         if (this.tunTapAdapter.isRunning()) {
+            this.tunTapAdapter.stopSocks5Proxy();
             this.tunTapAdapter.interrupt();
             try {
                 this.tunTapAdapter.join();
@@ -795,6 +953,7 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
             }
         }
         this.tunTapAdapter.clearRouteMap();
+        this.tunTapAdapter.configureSocks5(socks5, socksEndpoint);
 
         // 重启 VPN Socket
         if (this.vpnSocket != null) {
@@ -809,6 +968,7 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
             this.in = null;
             this.out = null;
         }
+        
 
         // 配置 VPN
         Log.i(TAG, "Configuring VpnService.Builder");
@@ -889,6 +1049,10 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
                 }
             }
             builder.addRoute(InetAddress.getByName("224.0.0.0"), 4);
+            if (socks5.isEnabled() && proxyAppsSelected) {
+                // Capture IPv4 Internet packets locally; the dispatcher keeps ZT prefixes direct.
+                builder.addRoute(InetAddress.getByName("0.0.0.0"), 0);
+            }
         } catch (Exception e) {
             this.eventBus.post(new VPNErrorEvent(e.getLocalizedMessage()));
             return false;
@@ -910,8 +1074,18 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
 
         builder.setSession(Constants.VPN_SESSION_NAME);
 
-        // 设置部分 APP 不经过 VPN
-        if (!isRouteViaZeroTier && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        // Per-app SOCKS mode uses an allowlist; an empty set deliberately leaves out
+        // the IPv4 default route so empty never means "all apps".
+        if (socks5.isEnabled() && proxyAppsSelected) {
+            for (String packageName : selectedSocksApps) {
+                try {
+                    builder.addAllowedApplication(packageName);
+                } catch (Exception invalidPackage) {
+                    Log.w(TAG, "Skipping unavailable SOCKS5 allowlist package");
+                }
+            }
+        } else if (!isRouteViaZeroTier && !socks5.isEnabled()
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             for (var app : DISALLOWED_APPS) {
                 try {
                     builder.addDisallowedApplication(app);
@@ -931,6 +1105,21 @@ public class ZeroTierOneService extends VpnService implements Runnable, EventLis
         this.out = new FileOutputStream(this.vpnSocket.getFileDescriptor());
         this.tunTapAdapter.setVpnSocket(this.vpnSocket);
         this.tunTapAdapter.setFileStreams(this.in, this.out);
+        if (socks5.isEnabled() && proxyAppsSelected) {
+            if (socksEndpoint == null || !this.tunTapAdapter.hasSpecificRoute(socksEndpoint)) {
+                Log.e(TAG, "HEV_START_FAILED: SOCKS endpoint is not covered by an active ZeroTier prefix");
+            } else {
+                Log.i(TAG, "SOCKS_ENDPOINT_DIRECT: " + socksEndpoint.getHostAddress());
+                Log.i(TAG, "HEV_START");
+                try {
+                    this.tunTapAdapter.startSocks5Proxy(this,
+                            socksEndpoint.getHostAddress(), socks5.getPort(), mtu);
+                    Log.i(TAG, "PROXY_ROUTE_ACTIVE");
+                } catch (Exception e) {
+                    Log.e(TAG, "HEV_START_FAILED", e);
+                }
+            }
+        }
         this.tunTapAdapter.startThreads();
 
         // 状态栏提示

@@ -1,6 +1,7 @@
 package net.kaaass.zerotierfix.service;
 
 import android.os.ParcelFileDescriptor;
+
 import android.support.v4.media.session.PlaybackStateCompat;
 import android.util.Log;
 
@@ -13,10 +14,12 @@ import com.zerotier.sdk.util.StringUtils;
 import net.kaaass.zerotierfix.util.DebugLog;
 import net.kaaass.zerotierfix.util.IPPacketUtils;
 import net.kaaass.zerotierfix.util.InetAddressUtils;
+import net.kaaass.zerotierfix.model.Socks5Config;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import android.content.Context;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -36,6 +39,7 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
     private final HashMap<Route, Long> routeMap = new HashMap<>();
     private final long networkId;
     private final ZeroTierOneService ztService;
+    private final Object tunOutputLock = new Object();
     private ARPTable arpTable = new ARPTable();
     private FileInputStream in;
     private NDPTable ndpTable = new NDPTable();
@@ -43,6 +47,11 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
     private FileOutputStream out;
     private Thread receiveThread;
     private ParcelFileDescriptor vpnSocket;
+    private Socks5Config socks5Config;
+    private InetAddress socks5Endpoint;
+    private HevPacketBridge hevBridge;
+    private long lastProxyBlockedLog;
+    private long hevPacketsBridged;
 
     public TunTapAdapter(ZeroTierOneService zeroTierOneService, long j) {
         this.ztService = zeroTierOneService;
@@ -80,6 +89,62 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
 
     public void setVpnSocket(ParcelFileDescriptor vpnSocket) {
         this.vpnSocket = vpnSocket;
+
+    }
+
+ 
+    public void configureSocks5(Socks5Config config, InetAddress endpoint) {
+        this.socks5Config = config;
+        this.socks5Endpoint = endpoint;
+    }
+
+    public boolean hasSpecificRoute(InetAddress address) {
+        synchronized (this.routeMap) {
+            for (Route route : this.routeMap.keySet()) {
+                if (route.getPrefix() > 0 && route.belongsToRoute(address)) return true;
+            }
+        }
+        return false;
+    }
+
+    public void startSocks5Proxy(Context context, String endpoint, int port, int mtu) throws IOException {
+        if (this.socks5Config == null || !this.socks5Config.isEnabled()) return;
+        this.hevBridge = new HevPacketBridge(context, this::writeHevPacketToTun);
+        try {
+            this.hevBridge.start(endpoint, port, mtu);
+        } catch (IOException e) {
+            this.hevBridge = null;
+            throw e;
+        } catch (RuntimeException | LinkageError e) {
+            this.hevBridge.stop();
+            this.hevBridge = null;
+            throw new IOException("HEV startup failed", e);
+        }
+    }
+
+    public void stopSocks5Proxy() {
+        HevPacketBridge bridge = this.hevBridge;
+        this.hevBridge = null;
+        if (bridge != null) bridge.stop();
+    }
+
+    private void writeHevPacketToTun(byte[] packet) {
+        if (!Socks5PacketClassifier.isValidIpv4(packet)) {
+            Log.e(TAG, "HEV returned an invalid IPv4 packet; dropped");
+            return;
+        }
+        writeTunPacket(packet);
+    }
+
+    private void writeTunPacket(byte[] packet) {
+        synchronized (this.tunOutputLock) {
+            if (this.out == null) return;
+            try {
+                this.out.write(packet);
+            } catch (IOException e) {
+                Log.e(TAG, "Error writing packet to VPN TUN", e);
+            }
+        }
     }
 
     public void setFileStreams(FileInputStream fileInputStream, FileOutputStream fileOutputStream) {
@@ -127,7 +192,7 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
                     buffer.order(ByteOrder.LITTLE_ENDIAN);
                     while (!isInterrupted()) {
                         try {
-                            boolean noDataBeenRead = true;
+                            boolean noDataBeenRead = true; 
                             int readCount = TunTapAdapter.this.in.read(buffer.array());
                             if (readCount > 0) {
                                 DebugLog.d(TunTapAdapter.TAG, "Sending packet to ZeroTier. " + readCount + " bytes.");
@@ -135,9 +200,19 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
                                 System.arraycopy(buffer.array(), 0, readData, 0, readCount);
                                 byte iPVersion = IPPacketUtils.getIPVersion(readData);
                                 if (iPVersion == 4) {
-                                    TunTapAdapter.this.handleIPv4Packet(readData);
+                                    if (TunTapAdapter.this.socks5Config != null
+                                            && TunTapAdapter.this.socks5Config.isEnabled()) {
+                                        TunTapAdapter.this.dispatchSocks5Packet(readData);
+                                    } else {
+                                        TunTapAdapter.this.handleIPv4Packet(readData);
+                                    }
                                 } else if (iPVersion == 6) {
-                                    TunTapAdapter.this.handleIPv6Packet(readData);
+                                    if (TunTapAdapter.this.socks5Config != null
+                                            && TunTapAdapter.this.socks5Config.isEnabled()) {
+                                        TunTapAdapter.this.dispatchSocks5Ipv6Packet(readData);
+                                    } else {
+                                        TunTapAdapter.this.handleIPv6Packet(readData);
+                                    }
                                 } else {
                                     Log.e(TunTapAdapter.TAG, "Unknown IP version");
                                 }
@@ -162,6 +237,43 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
             }
         };
         this.receiveThread.start();
+    }
+
+    private void dispatchSocks5Packet(byte[] packet) {
+        java.util.ArrayList<Route> routes;
+        synchronized (this.routeMap) {
+            routes = new java.util.ArrayList<>(this.routeMap.keySet());
+        }
+        HevPacketBridge bridge = this.hevBridge;
+        boolean engineAvailable = bridge != null && bridge.isRunning();
+        Socks5PacketClassifier.Decision decision = Socks5PacketClassifier.classify(
+                packet, this.socks5Endpoint, routes, engineAvailable);
+        if (decision == Socks5PacketClassifier.Decision.ZERO_TIER) {
+            handleIPv4Packet(packet);
+        } else if (decision == Socks5PacketClassifier.Decision.HEV) {
+            if (!bridge.send(packet)) {
+                logProxyBlocked("HEV bridge queue full");
+            } else if (++this.hevPacketsBridged == 1 || this.hevPacketsBridged % 100 == 0) {
+                Log.d(TAG, "HEV_PACKET_TO_BRIDGE count=" + this.hevPacketsBridged);
+            }
+        } else if ((packet.length > 9) && (packet[9] & 0xff) == 6) {
+            logProxyBlocked("HEV unavailable or packet invalid");
+        }
+    }
+
+    private void dispatchSocks5Ipv6Packet(byte[] packet) {
+        InetAddress destination = IPPacketUtils.getDestIP(packet);
+        if (destination != null && hasSpecificRoute(destination)) {
+            handleIPv6Packet(packet);
+        }
+    }
+
+    private void logProxyBlocked(String reason) {
+        long now = System.currentTimeMillis();
+        if (now - this.lastProxyBlockedLog >= 5000) {
+            this.lastProxyBlockedLog = now;
+            Log.w(TAG, "PROXY_ROUTE_BLOCKED: " + reason);
+        }
     }
 
     private void handleIPv4Packet(byte[] packetData) {
@@ -358,6 +470,7 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
     }
 
     public void interrupt() {
+        stopSocks5Proxy();
         if (this.receiveThread != null) {
             try {
                 this.in.close();
@@ -455,7 +568,7 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
                         this.arpTable.setAddress(sourceIP, srcMac);
                     }
                 }
-                this.out.write(frameData);
+                writeTunPacket(frameData);
             } catch (Exception e) {
                 Log.e(TAG, "Error writing data to vpn socket: " + e.getMessage(), e);
             }
@@ -487,23 +600,35 @@ public class TunTapAdapter implements VirtualNetworkFrameListener {
 
     private Route routeForDestination(InetAddress destAddress) {
         synchronized (this.routeMap) {
-            for (var route : this.routeMap.keySet()) {
-                if (route.belongsToRoute(destAddress)) {
-                    return route;
+            if (this.socks5Config == null || !this.socks5Config.isEnabled()) {
+                for (var route : this.routeMap.keySet()) {
+                    if (route.belongsToRoute(destAddress)) return route;
                 }
+                return null;
             }
-            return null;
+            Route best = null;
+            for (var route : this.routeMap.keySet()) {
+                if (route.belongsToRoute(destAddress)
+                        && (best == null || route.getPrefix() > best.getPrefix())) best = route;
+            }
+            return best;
         }
     }
 
     private long networkIdForDestination(InetAddress destAddress) {
         synchronized (this.routeMap) {
-            for (Route route : this.routeMap.keySet()) {
-                if (route.belongsToRoute(destAddress)) {
-                    return this.routeMap.get(route);
+            if (this.socks5Config == null || !this.socks5Config.isEnabled()) {
+                for (Route route : this.routeMap.keySet()) {
+                    if (route.belongsToRoute(destAddress)) return this.routeMap.get(route);
                 }
+                return 0;
             }
-            return 0;
+            Route best = null;
+            for (Route route : this.routeMap.keySet()) {
+                if (route.belongsToRoute(destAddress)
+                        && (best == null || route.getPrefix() > best.getPrefix())) best = route;
+            }
+            return best == null ? 0 : this.routeMap.get(best);
         }
     }
 }

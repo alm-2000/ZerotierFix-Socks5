@@ -3,6 +3,7 @@ package net.kaaass.zerotierfix.util;
 import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
 import android.os.Build;
 import android.util.Log;
 
@@ -34,26 +35,41 @@ public class NetworkInfoUtils {
         if (Build.VERSION.SDK_INT >= 23) {
             var networkCapabilities = connectivityManager
                     .getNetworkCapabilities(connectivityManager.getActiveNetwork());
-            if (networkCapabilities == null) {
-                return CurrentConnection.CONNECTION_NONE;
+            if (networkCapabilities != null) {
+                if (networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    return CurrentConnection.CONNECTION_MOBILE;
+                }
+                return CurrentConnection.CONNECTION_OTHER;
             }
-            if (networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-                return CurrentConnection.CONNECTION_MOBILE;
+
+            // Samsung/Android 9 can report a null active-network capabilities object
+            // while a usable Wi-Fi network is present (for example during VPN/default
+            // route changes). Inspect the available networks before declaring offline.
+            boolean hasCellular = false;
+            for (var network : connectivityManager.getAllNetworks()) {
+                var capabilities = connectivityManager.getNetworkCapabilities(network);
+                if (capabilities == null) continue;
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                        || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                    return CurrentConnection.CONNECTION_OTHER;
+                }
+                if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    hasCellular = true;
+                }
             }
-            return CurrentConnection.CONNECTION_OTHER;
-        } else {
-            var activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
-            if (activeNetworkInfo == null) {
-                return CurrentConnection.CONNECTION_NONE;
-            }
-            if (!activeNetworkInfo.isConnectedOrConnecting()) {
-                return CurrentConnection.CONNECTION_NONE;
-            }
-            if (activeNetworkInfo.getType() == 0) {
-                return CurrentConnection.CONNECTION_MOBILE;
-            }
-            return CurrentConnection.CONNECTION_OTHER;
+            if (hasCellular) return CurrentConnection.CONNECTION_MOBILE;
         }
+
+        // ConnectivityCapabilities can be transiently unavailable while Android is
+        // switching networks. Fall back to the legacy API, as the main UI already does.
+        NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
+        if (activeNetworkInfo == null || !activeNetworkInfo.isConnectedOrConnecting()) {
+            return CurrentConnection.CONNECTION_NONE;
+        }
+        if (activeNetworkInfo.getType() == 0) {
+            return CurrentConnection.CONNECTION_MOBILE;
+        }
+        return CurrentConnection.CONNECTION_OTHER;
     }
 
     public static List<String> listMulticastGroupOnInterface(String interfaceName, boolean isIpv6) {

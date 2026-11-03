@@ -11,6 +11,10 @@
             android:title="@string/set_planet_file" />
     </PreferenceCategory>
     <PreferenceCategory android:title="@string/preferences_network">
+        <Preference
+            android:key="widget_network_id"
+            android:title="@string/widget_network_setting_title"
+            android:summary="@string/widget_network_setting_summary" />
         <CheckBoxPreference
             android:defaultValue="false"
             android:key="network_use_cellular_data"
@@ -20,5 +24,26 @@
             android:key="network_disable_ipv6"
             android:summary="@string/preferences_network_disable_ipv6_summary"
             android:title="@string/preferences_network_disable_ipv6" />
+        <SwitchPreference
+            android:defaultValue="false"
+            android:key="socks5_enabled"
+            android:summary="@string/preferences_socks5_summary"
+            android:title="@string/preferences_socks5_enabled" />
+        <Preference
+            android:key="socks5_applications"
+            android:summary="@string/preferences_socks5_apps_summary"
+            android:title="@string/preferences_socks5_apps" />
+        <net.kaaass.zerotierfix.ui.Socks5ValueEditTextPreference
+            android:defaultValue=""
+            android:dialogTitle="@string/preferences_socks5_host"
+            android:key="socks5_host"
+            android:inputType="textUri"
+            android:title="@string/preferences_socks5_host" />
+        <net.kaaass.zerotierfix.ui.Socks5ValueEditTextPreference
+            android:defaultValue="9050"
+            android:dialogTitle="@string/preferences_socks5_port"
+            android:key="socks5_port"
+            android:inputType="number"
+            android:title="@string/preferences_socks5_port" />
     </PreferenceCategory>
 </PreferenceScreen>
