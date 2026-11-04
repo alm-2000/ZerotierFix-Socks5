@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/kaaass/ZerotierFix/actions/workflows/build-app.yml">
-        <img src="https://github.com/kaaass/ZerotierFix/actions/workflows/build-app.yml/badge.svg" alt="Build APP"/>
+    <a href="https://github.com/alm-2000/ZerotierFix-Socks5/actions/workflows/build-app.yml">
+        <img src="https://github.com/alm-2000/ZerotierFix-Socks5/actions/workflows/build-app.yml/badge.svg" alt="Build APP"/>
     </a>
 </p>
 
@@ -33,7 +33,7 @@
 
 Check [Releases page](https://github.com/alm-2000/ZerotierFix-Socks5/releases) for latest version.
 
-If you want to try the nightly build, you can download it from [GitHub Actions](https://github.com/kalm-2000/ZerotierFix-Socks5/actions/workflows/build-app.yml?query=branch%3Amaster).
+If you want to try the nightly build, you can download it from [GitHub Actions](https://github.com/alm-2000/ZerotierFix-Socks5/actions/workflows/build-app.yml?query=branch%3Amaster).
 But please note that the nightly build may be **BUGGY** and **UNSTABLE**.
 
 ## Copyright
