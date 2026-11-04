@@ -1,12 +1,13 @@
 <h1 align="center">
   <img src="https://github.com/kaaass/ZerotierFix/blob/master/app/src/main/ic_launcher-playstore.png?raw=true" alt="Zerotier Fix" width="200">
-  <br>Zerotier Fix<br>
+  <br>Zerotier Fix + Socks5<br>
 </h1>
 
 <h4 align="center">An unofficial Zerotier Android client patched from official client.</h4>
 
 <p align="center">
   <img src="screenshots/main.png" alt="main" width="150"/>
+  <img src="screenshots/config.png" alt="config" width="150"/>
   <img src="screenshots/peers.png" alt="peers" width="150"/>
   <img src="screenshots/moons.png" alt="moons" width="150"/>
 </p>
@@ -22,13 +23,17 @@
 - Self-hosted Moon Support
 - Add custom planet config via file and URL
 - View peers list
+- Ability to select applications for tunneling
+- Added built-in tunneling through a SOCKS 5 server located in the ZeroTier network
+- Connection widget
 - Chinese translation
+- Russian translation
 
 ## Download
 
-Check [Releases page](https://github.com/kaaass/ZerotierFix/releases) for latest version.
+Check [Releases page](https://github.com/alm-2000/ZerotierFix-Socks5/releases) for latest version.
 
-If you want to try the nightly build, you can download it from [GitHub Actions](https://github.com/kaaass/ZerotierFix/actions/workflows/build-app.yml?query=branch%3Amaster).
+If you want to try the nightly build, you can download it from [GitHub Actions](https://github.com/kalm-2000/ZerotierFix-Socks5/actions/workflows/build-app.yml?query=branch%3Amaster).
 But please note that the nightly build may be **BUGGY** and **UNSTABLE**.
 
 ## Copyright
