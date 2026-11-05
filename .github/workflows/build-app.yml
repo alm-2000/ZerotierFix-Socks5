@@ -41,6 +41,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Download HEV SOCKS5 AAR
+        run: |
+          mkdir -p app/libs
+          curl --fail --location --retry 3 \
+            https://github.com/heiher/hev-socks5-tunnel/releases/download/2.18.0/hev-socks5-tunnel.aar \
+            --output app/libs/hev-socks5-tunnel-2.18.0.aar
+          echo "15ec8ed121663b562c99caa5bb602d1009f24e5b09e733438b81988f12feaaab  app/libs/hev-socks5-tunnel-2.18.0.aar" | sha256sum --check
+
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
 
