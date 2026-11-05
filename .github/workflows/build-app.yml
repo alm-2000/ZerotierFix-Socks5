@@ -21,14 +21,20 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Java
+      - name: Set up Java for Android SDK tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Java for Gradle
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '11'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
